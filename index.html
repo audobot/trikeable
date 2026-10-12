@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Trikeable">
+<title>Trikeable</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: full-bleed map, controls in a bottom sheet on phones and a left rail on wide screens.
+   Hi-vis amber marks the route, the way a safety vest marks a rider. */
+:root {
+  --bg: #f3f5f4;
+  --panel: #ffffff;
+  --fg: #16201d;
+  --muted: #5b6a65;
+  --line: #d9e0dd;
+  --route: #e8590c;
+  --accent: #0b6e5f;
+  --accent-fg: #ffffff;
+  --ok: #1d7a3e;
+  --warn: #b25e00;
+  --bad: #b3261e;
+  --chip: #e8eeec;
+  --font-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Helvetica Neue", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1513; --panel: #17201d; --fg: #e8efec; --muted: #9db0a9; --line: #2a3632;
+    --route: #ff8a3d; --accent: #3cc7ae; --accent-fg: #062520; --ok: #5fd28a; --warn: #f2a33a; --bad: #ff7a70; --chip: #22302b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1513; --panel: #17201d; --fg: #e8efec; --muted: #9db0a9; --line: #2a3632;
+  --route: #ff8a3d; --accent: #3cc7ae; --accent-fg: #062520; --ok: #5fd28a; --warn: #f2a33a; --bad: #ff7a70; --chip: #22302b;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.4 var(--font-body); display: flex; flex-direction: column; }
+#map { flex: 1; min-height: 0; background: var(--bg); }
+.sheet {
+  background: var(--panel); border-top: 1px solid var(--line);
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 55vh; overflow-y: auto;
+}
+@media (min-width: 820px) {
+  body { flex-direction: row-reverse; }
+  .sheet { width: 380px; max-height: none; border-top: 0; border-right: 1px solid var(--line); padding-top: calc(18px + env(safe-area-inset-top, 0px)); }
+}
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+h1 { font: 800 1.5rem/1 var(--font-display); letter-spacing: -0.01em; margin: 0; }
+.spec { font-size: 0.8rem; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.field { display: grid; grid-template-columns: 1fr auto; gap: 6px; position: relative; }
+.field label { grid-column: 1 / -1; font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+input[type=search] {
+  width: 100%; min-width: 0; font: inherit; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px;
+}
+input[type=search]:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); color: var(--fg); padding: 10px 12px; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; padding: 13px; }
+button:disabled { opacity: 0.55; cursor: default; }
+.suggest { grid-column: 1 / -1; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.suggest button { border: 0; border-radius: 0; background: var(--panel); text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.suggest button:last-child { border-bottom: 0; }
+.suggest small { display: block; color: var(--muted); }
+.toggles { display: flex; flex-wrap: wrap; gap: 8px; }
+.toggle { display: flex; align-items: center; gap: 8px; background: var(--chip); border-radius: 999px; padding: 7px 12px; font-size: 0.9rem; cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 18px; height: 18px; margin: 0; }
+.result { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.stats { display: flex; gap: 18px; font-variant-numeric: tabular-nums; }
+.stats b { font: 800 1.6rem/1 var(--font-display); display: block; }
+.stats span { font-size: 0.8rem; color: var(--muted); }
+.verdict { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--chip); }
+.dot { flex: none; width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.hazards { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 0.92rem; }
+.hazards button { width: 100%; text-align: left; background: transparent; border: 0; padding: 4px 0; display: flex; gap: 8px; align-items: center; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.hint { font-size: 0.85rem; color: var(--muted); margin: 0; }
+.error { color: var(--bad); font-size: 0.95rem; margin: 0; }
+.leaflet-container { font: inherit; }
+@media (prefers-color-scheme: dark) { .plain-tiles { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); } }
+.leaflet-popup-content { display: flex; gap: 6px; margin: 10px; }
+.layerbtn { position: absolute; top: calc(10px + env(safe-area-inset-top, 0px)); right: 10px; z-index: 500; padding: 7px 10px; font-size: 0.85rem; background: var(--panel); box-shadow: 0 1px 4px rgb(0 0 0 / 0.25); }
+.mapwrap { position: relative; flex: 1; min-height: 0; display: flex; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="mapwrap">
+  <div id="map" aria-label="Map"></div>
+  <button class="layerbtn" id="layerBtn" type="button">Bike map</button>
+</div>
+
+<section class="sheet" aria-label="Plan a route">
+  <header>
+    <h1>Trikeable</h1>
+    <span class="spec">Soletri · 83cm wide</span>
+  </header>
+
+  <div class="field">
+    <label for="fromInput">From</label>
+    <input id="fromInput" type="search" placeholder="Search a place or tap the map" autocomplete="off">
+    <button id="hereBtn" type="button" title="Use my location">Here</button>
+    <div class="suggest" id="fromSuggest" hidden></div>
+  </div>
+
+  <div class="field">
+    <label for="toInput">To</label>
+    <input id="toInput" type="search" placeholder="Search a place or tap the map" autocomplete="off">
+    <button id="swapBtn" type="button" title="Swap start and end">Swap</button>
+    <div class="suggest" id="toSuggest" hidden></div>
+  </div>
+
+  <div class="toggles">
+    <label class="toggle"><input type="checkbox" id="pushToggle"> Short walks OK</label>
+    <label class="toggle"><input type="checkbox" id="bollardToggle"> Avoid bollards too</label>
+  </div>
+
+  <button class="primary" id="routeBtn" type="button">Find a trike route</button>
+  <p class="error" id="errorMsg" hidden></p>
+
+  <div class="result" id="result" hidden>
+    <div class="stats">
+      <div><b id="statKm">–</b><span>km</span></div>
+      <div><b id="statMin">–</b><span>minutes</span></div>
+    </div>
+    <div class="verdict"><span class="dot" id="verdictDot"></span><div id="verdictText"></div></div>
+    <ul class="hazards" id="hazardList"></ul>
+    <div class="actions">
+      <button type="button" id="shareBtn">Send to OsmAnd</button>
+      <button type="button" id="gpxBtn">Download GPX</button>
+    </div>
+    <p class="hint">In OsmAnd, open the file, then choose Navigation › Follow track.</p>
+  </div>
+
+  <p class="hint" id="footHint">Tap the map to drop a pin. Routes come from OpenStreetMap, so a tight gate nobody has mapped can still turn up.</p>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(() => {
+  const BROUTER = "https://brouter.de/brouter";
+  const PHOTON = "https://photon.komoot.io/api/";
+  const MELB = [-37.8136, 144.9631];
+
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem("trikeable:" + k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem("trikeable:" + k, JSON.stringify(v)); } catch {} }
+  };
+
+  // ---------- map ----------
+  const map = L.map("map", { zoomControl: false }).setView(MELB, 13);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+  const attribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+  const plain = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    { attribution, maxZoom: 19, className: "plain-tiles" });
+  const bike = L.tileLayer("https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png",
+    { attribution: attribution + ' · <a href="https://www.cyclosm.org">CyclOSM</a>', maxZoom: 20, subdomains: "abc" });
+  let bikeOn = !!store.get("bikeLayer");
+  (bikeOn ? bike : plain).addTo(map);
+  $("layerBtn").textContent = bikeOn ? "Plain map" : "Bike map";
+  $("layerBtn").addEventListener("click", () => {
+    bikeOn = !bikeOn; store.set("bikeLayer", bikeOn);
+    map.removeLayer(bikeOn ? plain : bike); (bikeOn ? bike : plain).addTo(map);
+    $("layerBtn").textContent = bikeOn ? "Plain map" : "Bike map";
+  });
+
+  const pinIcon = (label, color) => L.divIcon({
+    className: "", iconSize: [30, 30], iconAnchor: [15, 15],
+    html: `<div style="width:30px;height:30px;border-radius:50%;background:${color};color:#fff;font:700 14px/30px var(--font-body);text-align:center;border:3px solid #fff;box-shadow:0 1px 4px rgb(0 0 0/.4)">${label}</div>`
+  });
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  const ends = { from: null, to: null };
+  const markers = { from: null, to: null };
+  let routeLayer = null, hazardLayer = L.layerGroup().addTo(map), lastGpx = null;
+
+  function setEnd(which, latlng, label) {
+    ends[which] = { lat: latlng.lat, lng: latlng.lng };
+    $(which + "Input").value = label || `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+    if (markers[which]) markers[which].setLatLng(latlng);
+    else {
+      markers[which] = L.marker(latlng, { draggable: true, icon: pinIcon(which === "from" ? "A" : "B", which === "from" ? css("--accent") : css("--route")) }).addTo(map);
+      markers[which].on("dragend", e => { setEnd(which, e.target.getLatLng(), "Dropped pin"); if (ends.from && ends.to) findRoute(); });
+    }
+  }
+
+  map.on("click", e => {
+    const box = document.createElement("div");
+    const mk = (txt, which) => {
+      const b = document.createElement("button"); b.type = "button"; b.textContent = txt;
+      b.onclick = () => { map.closePopup(); setEnd(which, e.latlng, "Dropped pin"); if (ends.from && ends.to) findRoute(); };
+      return b;
+    };
+    box.append(mk("Start here", "from"), mk("End here", "to"));
+    L.popup().setLatLng(e.latlng).setContent(box).openOn(map);
+  });
+
+  // ---------- search ----------
+  function describe(p) {
+    const name = p.name || [p.housenumber, p.street].filter(Boolean).join(" ");
+    const where = [p.housenumber && p.name ? [p.housenumber, p.street].join(" ") : (p.name ? p.street : null), p.district || p.locality, p.city].filter(Boolean);
+    return { name: name || p.city || "Place", where: [...new Set(where)].join(", ") };
+  }
+  function wireSearch(which) {
+    const input = $(which + "Input"), box = $(which + "Suggest");
+    let t = null, seq = 0;
+    input.addEventListener("input", () => {
+      clearTimeout(t);
+      const q = input.value.trim();
+      if (q.length < 3) { box.hidden = true; return; }
+      t = setTimeout(async () => {
+        const my = ++seq;
+        const c = map.getCenter();
+        try {
+          const r = await fetch(`${PHOTON}?q=${encodeURIComponent(q)}&lat=${c.lat}&lon=${c.lng}&limit=5&bbox=143.4,-38.7,146.4,-37.2`);
+          const d = await r.json();
+          if (my !== seq) return;
+          box.replaceChildren();
+          for (const f of d.features || []) {
+            const { name, where } = describe(f.properties);
+            const b = document.createElement("button"); b.type = "button";
+            b.textContent = name;
+            const s = document.createElement("small"); s.textContent = where; b.append(s);
+            b.onclick = () => {
+              const [lng, lat] = f.geometry.coordinates;
+              setEnd(which, L.latLng(lat, lng), name); box.hidden = true;
+              map.panTo([lat, lng]);
+            };
+            box.append(b);
+          }
+          box.hidden = !box.children.length;
+        } catch { box.hidden = true; }
+      }, 300);
+    });
+  }
+  wireSearch("from"); wireSearch("to");
+
+  $("hereBtn").addEventListener("click", () => {
+    if (!navigator.geolocation) return showError("This browser can't share your location. Search for your start instead.");
+    $("hereBtn").disabled = true;
+    navigator.geolocation.getCurrentPosition(pos => {
+      $("hereBtn").disabled = false;
+      const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      setEnd("from", ll, "My location"); map.setView(ll, 15);
+    }, () => { $("hereBtn").disabled = false; showError("Couldn't get your location. Check that Safari is allowed to use it, or search for your start."); },
+    { enableHighAccuracy: true, timeout: 10000 });
+  });
+
+  $("swapBtn").addEventListener("click", () => {
+    const f = ends.from, t = ends.to, fl = $("fromInput").value, tl = $("toInput").value;
+    if (f) setEnd("to", L.latLng(f.lat, f.lng), fl); else { ends.to = null; $("toInput").value = ""; }
+    if (t) setEnd("from", L.latLng(t.lat, t.lng), tl); else { ends.from = null; $("fromInput").value = ""; }
+    if (ends.from && ends.to) findRoute();
+  });
+
+  // ---------- toggles ----------
+  for (const [id, key] of [["pushToggle", "push"], ["bollardToggle", "bollards"]]) {
+    $(id).checked = !!store.get(key);
+    $(id).addEventListener("change", () => { store.set(key, $(id).checked); if (ends.from && ends.to) findRoute(); });
+  }
+
+  // ---------- routing ----------
+  let baseProfile = null;
+  async function profileId() {
+    if (!baseProfile) {
+      const r = await fetch("soletri.brf", { cache: "no-cache" });
+      if (!r.ok) throw new Error("Couldn't load the trike rules file.");
+      baseProfile = await r.text();
+    }
+    const text = baseProfile
+      .replace(/(assign\s+allow_pushing\s+=\s+)\w+/, `$1${$("pushToggle").checked}`)
+      .replace(/(assign\s+avoid_bollards\s+=\s+)\w+/, `$1${$("bollardToggle").checked}`)
+      .replace(/(assign\s+turnInstructionMode\s+=\s+)\d+/, "$13");
+    const r = await fetch(`${BROUTER}/profile`, { method: "POST", body: text });
+    const d = await r.json();
+    if (d.error) throw new Error("The routing server rejected the trike rules: " + d.error);
+    return d.profileid;
+  }
+
+  function showError(msg) { $("errorMsg").textContent = msg; $("errorMsg").hidden = !msg; }
+
+  function friendlyError(text) {
+    if (/island/i.test(text)) return "One of your pins is somewhere you'd have to walk the trike, like inside a station, a mall or a park with no ridable path. Drag it onto a street or bike path and try again.";
+    if (/no track found|not found/i.test(text)) return "There's no trike-safe way through between these points. Try moving a pin, or tick “Short walks OK”.";
+    if (/position not mapped|not mapped/i.test(text)) return "A pin is too far from any road or path. Drag it closer to one.";
+    return "The routing server had a problem: " + text.slice(0, 160);
+  }
+
+  const HAZARD_NAMES = {
+    bollard: "Bollard", block: "Bollard / block", gate: "Gate", swing_gate: "Swing gate", lift_gate: "Boom gate",
+    bump_gate: "Bump gate", sliding_gate: "Sliding gate", chain: "Chain", rope: "Rope", entrance: "Entrance gap",
+    door: "Door", yes: "Unspecified barrier", obstacle: "Obstacle"
+  };
+
+  async function findRoute() {
+    if (!ends.from || !ends.to) return showError("Set a start and an end first.");
+    showError(""); $("routeBtn").disabled = true; $("routeBtn").textContent = "Finding a route…";
+    try {
+      const pid = await profileId();
+      const lonlats = `${ends.from.lng},${ends.from.lat}|${ends.to.lng},${ends.to.lat}`;
+      const q = `${BROUTER}?lonlats=${lonlats}&profile=${pid}&alternativeidx=0`;
+      const [gj, gpx] = await Promise.all([
+        fetch(q + "&format=geojson").then(async r => { const t = await r.text(); if (!r.ok) throw new Error(friendlyError(t)); return JSON.parse(t); }),
+        fetch(q + "&format=gpx&trackname=Trikeable%20route").then(r => r.ok ? r.text() : null)
+      ]);
+      lastGpx = gpx;
+      draw(gj);
+    } catch (e) {
+      $("result").hidden = true;
+      showError(e.message && !/Failed to fetch|NetworkError|Load failed/.test(e.message) ? e.message : "Couldn't reach the routing server. Check your connection and try again.");
+    } finally {
+      $("routeBtn").disabled = false; $("routeBtn").textContent = "Find a trike route";
+    }
+  }
+  $("routeBtn").addEventListener("click", findRoute);
+
+  function draw(gj) {
+    const f = gj.features[0], p = f.properties;
+    const coords = f.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+    if (routeLayer) map.removeLayer(routeLayer);
+    routeLayer = L.layerGroup([
+      L.polyline(coords, { color: "#fff", weight: 9, opacity: 0.9 }),
+      L.polyline(coords, { color: css("--route"), weight: 5 })
+    ]).addTo(map);
+    map.fitBounds(L.latLngBounds(coords), { padding: [30, 30] });
+
+    $("statKm").textContent = (p["track-length"] / 1000).toFixed(1);
+    $("statMin").textContent = Math.max(1, Math.round(p["total-time"] / 60));
+
+    // read barriers and walk-across crossings off the route
+    const [hdr, ...rows] = p.messages;
+    const lonI = hdr.indexOf("Longitude"), latI = hdr.indexOf("Latitude"), nI = hdr.indexOf("NodeTags"), wI = hdr.indexOf("WayTags");
+    const hazards = [];
+    let walkM = 0;
+    const dI = hdr.indexOf("Distance");
+    for (const r of rows) {
+      const tags = r[nI] || "", way = r[wI] || "";
+      const latlng = [r[latI] / 1e6, r[lonI] / 1e6];
+      const b = tags.match(/barrier=(\S+)/);
+      if (b) hazards.push({ kind: "barrier", label: HAZARD_NAMES[b[1]] || b[1].replace(/_/g, " "), latlng, ok: /wheelchair=(yes|designated)/.test(tags) });
+      else if (/bicycle=dismount/.test(tags)) hazards.push({ kind: "walk", label: "Walk-across crossing", latlng });
+      if ((/highway=(footway|pedestrian)/.test(way) && !/bicycle=(yes|designated|permissive)/.test(way)) || /highway=steps/.test(way)) walkM += +r[dI] || 0;
+    }
+
+    hazardLayer.clearLayers();
+    const list = $("hazardList"); list.replaceChildren();
+    for (const h of hazards) {
+      const color = h.kind === "walk" ? css("--warn") : h.ok ? css("--ok") : css("--warn");
+      L.circleMarker(h.latlng, { radius: 8, color: "#fff", weight: 2, fillColor: color, fillOpacity: 1 })
+        .bindTooltip(h.label + (h.ok ? " (wheelchair-friendly)" : "")).addTo(hazardLayer);
+      const li = document.createElement("li"), btn = document.createElement("button");
+      btn.type = "button";
+      const dot = document.createElement("span"); dot.className = "dot " + (h.ok ? "ok" : "warn"); dot.style.marginTop = "0";
+      btn.append(dot, document.createTextNode(h.label + (h.ok ? " · wheelchair-friendly" : "") + " · show on map"));
+      btn.onclick = () => map.setView(h.latlng, 18);
+      li.append(btn); list.append(li);
+    }
+
+    const walks = hazards.filter(h => h.kind === "walk").length;
+    const barriers = hazards.filter(h => h.kind === "barrier" && !h.ok).length;
+    let level = "ok", text;
+    if (walkM > 0) { level = "bad"; text = `About ${Math.round(walkM)}m of this route is a walk-your-bike section. You ticked “Short walks OK”.`; }
+    else if (walks || barriers) {
+      level = "warn";
+      const bits = [];
+      if (barriers) bits.push(`${barriers} bollard${barriers > 1 ? "s or gates" : " or gate"} to pass`);
+      if (walks) bits.push(`${walks} crossing${walks > 1 ? "s" : ""} marked “walk across”`);
+      text = `Rideable, with ${bits.join(" and ")}. They're listed below so you know where they are.`;
+    } else text = "Clear run. No steps, no walking sections, and no barriers on the map.";
+    $("verdictDot").className = "dot " + level;
+    $("verdictText").textContent = text;
+    $("result").hidden = false;
+    $("shareBtn").hidden = !(navigator.canShare && navigator.canShare({ files: [new File([""], "x.gpx", { type: "application/gpx+xml" })] }));
+  }
+
+  function gpxFile() {
+    return new File([lastGpx], `trikeable-${new Date().toISOString().slice(0, 10)}.gpx`, { type: "application/gpx+xml" });
+  }
+  $("shareBtn").addEventListener("click", async () => {
+    if (!lastGpx) return showError("The route file didn't come through. Try finding the route again.");
+    try { await navigator.share({ files: [gpxFile()], title: "Trikeable route" }); } catch (e) { if (e.name !== "AbortError") showError("Couldn't open the share sheet. Use Download GPX instead."); }
+  });
+  $("gpxBtn").addEventListener("click", () => {
+    if (!lastGpx) return showError("The route file didn't come through. Try finding the route again.");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(gpxFile()); a.download = gpxFile().name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+
+  // example so the first view shows what the app does: Footscray Station to Yarraville Village
+  setEnd("from", L.latLng(-37.8013, 144.9025), "Footscray Station (example)");
+  setEnd("to", L.latLng(-37.8160, 144.8895), "Yarraville Village (example)");
+  findRoute();
+})();
+</script>
+</body>
+</html>
